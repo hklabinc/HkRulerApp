@@ -15,6 +15,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a") // 필요한 ABI만
+        }
     }
 
     buildTypes {
@@ -43,7 +47,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
-    implementation("com.github.quickbirdstudios:opencv-android:4.8.0")
+    implementation("org.opencv:opencv:4.12.0")
     // 필요하면 ML Kit 연동:
     // implementation("androidx.camera:camera-mlkit-vision:$camerax")
 

@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
         captureButton = findViewById(R.id.captureButton)
         resolutionSpinner = findViewById(R.id.resolutionSpinner)
 
-        if (!OpenCVLoader.initDebug()) {
+        if (!OpenCVLoader.initLocal()) {
             Log.e("OpenCV", "init failed")
         }
 
