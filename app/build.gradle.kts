@@ -43,7 +43,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
-    implementation("org.opencv:opencv-android:4.10.0")
+    implementation("com.github.quickbirdstudios:opencv-android:4.8.0")
     // 필요하면 ML Kit 연동:
     // implementation("androidx.camera:camera-mlkit-vision:$camerax")
 
