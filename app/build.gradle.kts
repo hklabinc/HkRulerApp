@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.hkruler"
+    namespace = "com.hklab.hkruler"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.hkruler"
+        applicationId = "com.hklab.hkruler"
         minSdk = 24
         targetSdk = 35
         versionCode = 1

@@ -15,7 +15,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HkRuler">
 
-        <!-- ✅ 메인 액티비티 -->
+        <!-- 메인 액티비티 -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -26,7 +26,7 @@
             </intent-filter>
         </activity>
 
-        <!-- ✅ 해상도 표시용 새 액티비티 등록 -->
+        <!-- 해상도 표시용 새 액티비티 등록 -->
         <activity android:name=".ResolutionInfoActivity" />
     </application>
 
