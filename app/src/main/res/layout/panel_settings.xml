@@ -1,0 +1,115 @@
+<!-- panel_settings.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/panelRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="#80000000">
+
+    <!-- Focus Mode -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Focus"
+            android:textColor="@android:color/white"
+            android:layout_gravity="center_vertical"/>
+        <Spinner
+            android:id="@+id/spFocusMode"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+    </LinearLayout>
+
+    <!-- Manual Focus -->
+    <LinearLayout
+        android:id="@+id/rowManualFocus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:visibility="gone"
+        android:layout_marginTop="8dp">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MF"
+            android:textColor="@android:color/white"
+            android:layout_gravity="center_vertical"/>
+        <SeekBar
+            android:id="@+id/seekManualFocus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+        <TextView
+            android:id="@+id/txtManualFocusValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@android:color/white"
+            android:text="0.000"
+            android:layout_marginStart="6dp"/>
+    </LinearLayout>
+
+    <!-- EV -->
+    <LinearLayout
+        android:id="@+id/rowEv"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp"
+        android:visibility="gone">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="EV"
+            android:textColor="@android:color/white"
+            android:layout_gravity="center_vertical"/>
+        <SeekBar
+            android:id="@+id/seekEv"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+        <TextView
+            android:id="@+id/txtEvValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@android:color/white"
+            android:text="0"
+            android:layout_marginStart="6dp"/>
+    </LinearLayout>
+
+    <!-- Align Assist -->
+    <CheckBox
+        android:id="@+id/switchAlignAssist"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Align Assist"
+        android:textColor="@android:color/white"
+        android:layout_marginTop="8dp"/>
+
+    <!-- Aspect -->
+    <RadioGroup
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+        <RadioButton
+            android:id="@+id/radioAspect16x9"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="16:9"
+            android:textColor="@android:color/white"
+            android:checked="true"/>
+        <RadioButton
+            android:id="@+id/radioAspect4x3"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="4:3"
+            android:textColor="@android:color/white"
+            android:layout_marginStart="12dp"/>
+    </RadioGroup>
+
+</LinearLayout>

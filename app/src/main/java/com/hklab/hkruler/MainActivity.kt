@@ -1,218 +1,177 @@
+// MainActivity.kt
 package com.hklab.hkruler
 
 import android.Manifest
-import android.content.ContentValues
-import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.os.*
-import android.provider.MediaStore
-import android.util.Log
-import android.util.Size
-import android.view.MotionEvent
-import android.view.Surface
+import android.os.Bundle
 import android.view.View
-import android.view.ViewGroup
-import android.widget.*
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.*
-import org.opencv.android.OpenCVLoader
-import java.io.*
-import java.text.SimpleDateFormat
-import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import com.hklab.hkruler.camera.CameraController
+import com.hklab.hkruler.data.AppSettings
+import com.hklab.hkruler.data.Aspect
+import com.hklab.hkruler.data.FocusMode
+import com.hklab.hkruler.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var previewView: PreviewView
-    private lateinit var captureButton: Button
-    private lateinit var resolutionSpinner: Spinner
-    private lateinit var focusIndicator: View
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var camera: CameraController
+    private var settings = AppSettings(
+        aspect = Aspect.R16_9,
+        // 필요 시 초기값 조정
+    )
 
-    private var imageCapture: ImageCapture? = null
-    private var camera: Camera? = null
-    private var selectedResolution: Size? = null
-    private var top5Resolutions: List<Size> = emptyList()
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val requestCameraPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startCamera()
+            else finish()
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ✅ 항상 가로 고정
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        setContentView(R.layout.activity_main)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        previewView = findViewById(R.id.previewView)
-        captureButton = findViewById(R.id.captureButton)
-        resolutionSpinner = findViewById(R.id.resolutionSpinner)
+        // CameraController 생성
+        camera = CameraController(
+            context = this,
+            previewView = binding.previewView,
+            overlay = binding.lineOverlay
+        )
 
-        // ✅ 초점 표시용 원 생성
-        focusIndicator = View(this).apply {
-            layoutParams = ViewGroup.LayoutParams(100, 100)
-            background = ContextCompat.getDrawable(context, android.R.drawable.presence_online)
-            alpha = 0f
-        }
-        (previewView.parent as ViewGroup).addView(focusIndicator)
-
-        if (!OpenCVLoader.initDebug()) {
-            Log.e("OpenCV", "Initialization failed")
+        // 버튼: Settings 토글
+        binding.btnSettings.setOnClickListener {
+            binding.settingsPanel.root.visibility =
+                if (binding.settingsPanel.root.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
 
-        val needs = mutableListOf(Manifest.permission.CAMERA)
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P)
-            needs += Manifest.permission.WRITE_EXTERNAL_STORAGE
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            if (it[Manifest.permission.CAMERA] == true) startCamera()
-            else toast("Camera permission denied")
-        }.launch(needs.toTypedArray())
+        // --- Settings UI 초기화
+        setupSettingsUi()
 
-        top5Resolutions = queryTop5JpegSizesForCameraId0()
-
-        val labels = top5Resolutions.map { "${it.width}x${it.height}" }
-        resolutionSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
-        resolutionSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>, v: View?, pos: Int, id: Long) {
-                selectedResolution = top5Resolutions.getOrNull(pos)
-                startCamera()
-            }
-
-            override fun onNothingSelected(p: AdapterView<*>) {}
+        // 권한 확인 후 시작
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            startCamera()
+        } else {
+            requestCameraPermission.launch(Manifest.permission.CAMERA)
         }
-
-        captureButton.setOnClickListener { takePhoto() }
     }
 
     private fun startCamera() {
-        val providerFuture = ProcessCameraProvider.getInstance(this)
-        providerFuture.addListener({
-            val provider = providerFuture.get()
-
-            val backCamera = CameraSelector.Builder()
-                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                .build()
-
-            val captureBuilder = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                .setTargetRotation(Surface.ROTATION_90) // ✅ 가로로 촬영
-            selectedResolution?.let { captureBuilder.setTargetResolution(it) }
-            val imageCapture = captureBuilder.build()
-
-            val previewBuilder = Preview.Builder()
-            selectedResolution?.let { previewBuilder.setTargetResolution(it) }
-            val preview = previewBuilder.build().also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
-            }
-
-            provider.unbindAll()
-            camera = provider.bindToLifecycle(this, backCamera, preview, imageCapture)
-            this.imageCapture = imageCapture
-
-            setupTouchToFocus()
-
-        }, ContextCompat.getMainExecutor(this))
+        camera.bind(this, settings)
+        // EV 슬라이더는 카메라 바인딩 이후 상태가 준비되면 업데이트
+        binding.root.postDelayed({ bindEvUiFromCamera() }, 200)
     }
 
-    private fun setupTouchToFocus() {
-        val cameraControl = camera?.cameraControl ?: return
-
-        previewView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_UP) {
-                // 터치 지점 표시 🔵
-                focusIndicator.x = event.x - focusIndicator.width / 2
-                focusIndicator.y = event.y - focusIndicator.height / 2
-                focusIndicator.alpha = 1f
-                focusIndicator.animate().alpha(0f).setDuration(1000).start()
-
-                // 실제 초점 이동
-                val factory = previewView.meteringPointFactory
-                val point = factory.createPoint(event.x, event.y)
-                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
-                    .setAutoCancelDuration(3, TimeUnit.SECONDS)
-                    .build()
-                cameraControl.startFocusAndMetering(action)
-                toast("🔍 Focus adjusted")
-            }
-            true
+    /** EV 슬라이더를 현재 카메라 상태로 동기화 */
+    private fun bindEvUiFromCamera() {
+        val state = camera.exposureState
+        if (state == null) {
+            binding.settingsPanel.rowEv.visibility = View.GONE
+            return
         }
+        val range = state.exposureCompensationRange // Range<Int>
+        val cur = state.exposureCompensationIndex
+        val max = range.upper - range.lower
+
+        val sp = binding.settingsPanel
+        sp.rowEv.visibility = View.VISIBLE
+        sp.seekEv.max = max
+        sp.seekEv.progress = (cur - range.lower)
+        sp.txtEvValue.text = evIndexToLabel(cur)
+
+        sp.seekEv.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                val idx = range.lower + progress
+                sp.txtEvValue.text = evIndexToLabel(idx)
+                camera.applyEv(idx)
+                settings = settings.copy(evIndex = idx)
+            }
+            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
+        })
     }
 
-    private fun takePhoto() {
-        val imageCapture = imageCapture ?: return
-        val photoFile = File(
-            getExternalFilesDir(null),
-            "IMG_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
-        )
+    private fun evIndexToLabel(idx: Int): String {
+        // 간단 라벨 (필요시 노출 보정 스텝 반영)
+        return if (idx > 0) "+$idx" else idx.toString()
+    }
 
-        val out = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-        imageCapture.takePicture(out, ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    toast("Capture failed: ${exc.message}")
+    /** Settings 패널 UI/로직 */
+    private fun setupSettingsUi() {
+        val sp = binding.settingsPanel
+
+        // --- 포커스 모드 스피너
+        val items = listOf("Auto (Multi)", "Auto (Center)", "Manual")
+        sp.spFocusMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, items)
+
+        sp.spFocusMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>, view: View?, position: Int, id: Long) {
+                val newMode = when (position) {
+                    1 -> FocusMode.AUTO_CENTER
+                    2 -> FocusMode.MANUAL
+                    else -> FocusMode.AUTO_MULTI
+                }
+                settings = settings.copy(focusMode = newMode)
+
+                // 수동 포커스 UI 노출
+                if (sp.seekManualFocus != null) {
+                    val visible = if (newMode == FocusMode.MANUAL) View.VISIBLE else View.GONE
+                    sp.rowManualFocus.visibility = visible
                 }
 
-                override fun onImageSaved(result: ImageCapture.OutputFileResults) {
-                    toast("Saved: ${photoFile.name}")
+                // 카메라에 즉시 적용
+                camera.applyFocusMode(settings)
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
 
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val edgeProcessor = EdgeProcessor(this@MainActivity)
-                            selectedResolution?.let {
-                                edgeProcessor.process(photoFile.absolutePath, it)
-                            } ?: edgeProcessor.process(photoFile.absolutePath)
-
-                            saveToGallery(photoFile)
-                            val edgeFile = File(photoFile.parent, photoFile.nameWithoutExtension + "_edge.jpg")
-                            if (edgeFile.exists()) saveToGallery(edgeFile)
-
-                            withContext(Dispatchers.Main) {
-                                toast("Original + Edge saved to gallery ✅")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("PostProcess", "Error: ${e.message}", e)
-                        }
-                    }
+        // --- 수동 포커스 SeekBar
+        // 패널 레이아웃에 존재하지 않는 기기/레이아웃 대비해서 null 체크
+        sp.seekManualFocus?.apply {
+            max = 1000
+            progress = (settings.manualFocusDistance * 1000).toInt().coerceIn(0, 1000)
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                    val dist = progress / 1000f
+                    settings = settings.copy(manualFocusDistance = dist)
+                    camera.applyFocusMode(settings) // 수동 포커스 갱신
+                    sp.txtManualFocusValue?.text = String.format("%.3f", dist)
                 }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
             })
-    }
-
-    private fun saveToGallery(file: File) {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HkRuler")
+        } ?: run {
+            // 레이아웃에 없으면 전체 행 숨김
+            sp.rowManualFocus.visibility = View.GONE
         }
 
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        uri?.let { galleryUri ->
-            contentResolver.openOutputStream(galleryUri)?.use { output ->
-                FileInputStream(file).use { input -> input.copyTo(output) }
+        // --- 종횡비 라디오/스위치 (필요시)
+        sp.switchAlignAssist.setOnCheckedChangeListener { _, isChecked ->
+            settings = settings.copy(alignAssist = isChecked)
+            camera.bind(this, settings) // Analyzer 유무 바뀌므로 리바인딩
+        }
+
+        sp.radioAspect16x9.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                settings = settings.copy(aspect = Aspect.R16_9)
+                camera.bind(this, settings) // Preview/Capture 타겟 비율 적용
+                // EV 슬라이더 다시 동기화 (일부 기기는 비율/사이즈 변경시 상태 갱신 필요)
+                binding.root.post { bindEvUiFromCamera() }
+            }
+        }
+        sp.radioAspect4x3.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                settings = settings.copy(aspect = Aspect.R4_3)
+                camera.bind(this, settings)
+                binding.root.post { bindEvUiFromCamera() }
             }
         }
     }
-
-    private fun queryTop5JpegSizesForCameraId0(): List<Size> {
-        return try {
-            val cm = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            val characteristics = cm.getCameraCharacteristics("0")
-            val map = characteristics.get(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            val sizes = map?.getOutputSizes(android.graphics.ImageFormat.JPEG)?.toList().orEmpty()
-
-            sizes.filter { it.width >= 1280 && it.height >= 720 }
-                .sortedByDescending { it.width.toLong() * it.height.toLong() }
-                .distinctBy { Pair(it.width, it.height) }
-                .take(5)
-        } catch (e: Exception) {
-            Log.e("ResQuery", "Failed: ${e.message}")
-            listOf(Size(16320,12256), Size(12288,9216), Size(8192,6144))
-        }
-    }
-
-    private fun toast(msg: String) =
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
