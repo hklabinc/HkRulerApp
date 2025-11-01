@@ -1,4 +1,4 @@
-package com.example.hkruler
+package com.hklab.hkruler
 
 import org.junit.Test
 
