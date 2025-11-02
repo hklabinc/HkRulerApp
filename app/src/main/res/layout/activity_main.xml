@@ -6,7 +6,15 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- CameraX Preview -->
+    <!-- ===== Guideline (세로 80% 위치) ===== -->
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/guideline80"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintGuide_percent="0.8"
+        android:orientation="vertical" />
+
+    <!-- ===== Preview (왼쪽 80%) ===== -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="0dp"
@@ -14,8 +22,9 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toStartOf="@id/guideline80" />
 
+    <!-- Overlay -->
     <com.hklab.hkruler.processing.LineOverlayView
         android:id="@+id/lineOverlay"
         android:layout_width="0dp"
@@ -26,35 +35,44 @@
         app:layout_constraintStart_toStartOf="@id/previewView"
         app:layout_constraintEnd_toEndOf="@id/previewView" />
 
-    <Button
-        android:id="@+id/btnSettings"
-        android:text="Settings"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+    <!-- ===== 오른쪽 제어 영역 (20%) ===== -->
+    <LinearLayout
+        android:id="@+id/rightPanel"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:gravity="top|center_horizontal"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="12dp"
-        android:layout_marginEnd="12dp"/>
-
-    <include
-        android:id="@+id/settingsPanel"
-        layout="@layout/panel_settings"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:visibility="gone"/>
+        app:layout_constraintStart_toEndOf="@id/guideline80"
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <Button
-        android:id="@+id/btnCapture"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Capture"
-        android:layout_marginBottom="16dp"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/settingsPanel"
-        app:layout_goneMarginBottom="24dp" />
+        <!-- Settings 버튼 -->
+        <Button
+            android:id="@+id/btnSettings"
+            android:text="Settings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Settings Panel -->
+        <include
+            android:id="@+id/settingsPanel"
+            layout="@layout/panel_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Capture 버튼 -->
+        <Button
+            android:id="@+id/btnCapture"
+            android:text="Capture"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal|bottom"
+            android:layout_marginTop="16dp" />
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

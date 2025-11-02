@@ -47,7 +47,6 @@ class CameraController(
 
     /** 외부에서 현재 포커스 모드/거리도 참고 가능 (UI 바인딩용) */
     val currentFocusMode: FocusMode get() = currentSettings.focusMode
-    val currentManualFocusDistance: Float get() = currentSettings.manualFocusDistance
 
     fun supportedPreviewSizes(aspect: Aspect): List<Size> {
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -218,34 +217,23 @@ class CameraController(
     fun applyFocusMode(s: AppSettings) {
         val control = camera?.cameraControl ?: return
         when (s.focusMode) {
-            FocusMode.AUTO_MULTI -> { /* Continuous AF (기본) */ }
+            FocusMode.AUTO_MULTI -> {
+                // Continuous AF (기본)
+            }
 
             FocusMode.AUTO_CENTER -> {
                 val point = previewView.meteringPointFactory.createPoint(
                     previewView.width / 2f, previewView.height / 2f
                 )
                 val act = FocusMeteringAction.Builder(
-                    point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                    point,
+                    FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
                 ).setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS).build()
                 camera?.cameraControl?.startFocusAndMetering(act)
             }
-
-            FocusMode.MANUAL -> {
-                val c2 = Camera2CameraControl.from(control)
-                val opts = CaptureRequestOptions.Builder()
-                    .setCaptureRequestOption(
-                        CaptureRequest.CONTROL_AF_MODE,
-                        CaptureRequest.CONTROL_AF_MODE_OFF
-                    )
-                    .setCaptureRequestOption(
-                        CaptureRequest.LENS_FOCUS_DISTANCE,
-                        s.manualFocusDistance
-                    )
-                    .build()
-                c2.addCaptureRequestOptions(opts)
-            }
         }
     }
+
 
     private fun <T: UseCaseConfig.Builder<*,*,*>> applyAspectOrSize(builder: T, aspect: Aspect, size: Size?) {
         when (builder) {

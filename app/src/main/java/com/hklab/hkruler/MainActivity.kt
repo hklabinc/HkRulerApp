@@ -32,7 +32,7 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         private const val STORAGE_FOLDER = "HkRuler"
         private const val EV_BIND_DELAY_MS = 200L
-        private val FOCUS_MODE_LABELS = listOf("Auto (Multi)", "Auto (Center)", "Manual")
+        private val FOCUS_MODE_LABELS = listOf("Auto (Multi)", "Auto (Center)")
     }
 
     // ---- State
@@ -206,54 +206,19 @@ class MainActivity : AppCompatActivity() {
     /** Settings 패널 UI/로직 */
     private fun setupSettingsUi() {
         val sp = binding.settingsPanel
-        setupFocusModeSpinner(sp)
-        setupManualFocusSeekbar(sp)
+        setupFocusModeRadio(sp)
         setupAspectAndAssist(sp)
     }
 
-    private fun setupFocusModeSpinner(sp: com.hklab.hkruler.databinding.PanelSettingsBinding) {
-        sp.spFocusMode.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            FOCUS_MODE_LABELS
-        )
-
-        sp.spFocusMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>, view: View?, position: Int, id: Long) {
-                val newMode = when (position) {
-                    1 -> FocusMode.AUTO_CENTER
-                    2 -> FocusMode.MANUAL
-                    else -> FocusMode.AUTO_MULTI
-                }
-                settings = settings.copy(focusMode = newMode)
-
-                // 수동 포커스 UI 노출/숨김
-                sp.rowManualFocus.visibility = if (newMode == FocusMode.MANUAL) View.VISIBLE else View.GONE
-
-                // 카메라에 즉시 적용
-                camera.applyFocusMode(settings)
+    /** 포커스 모드 RadioGroup (Auto-Multi / Auto-Center) 설정 */
+    private fun setupFocusModeRadio(sp: com.hklab.hkruler.databinding.PanelSettingsBinding) {
+        sp.radioGroupFocus.setOnCheckedChangeListener { _, checkedId ->
+            val newMode = when (checkedId) {
+                sp.radioFocusCenter.id -> FocusMode.AUTO_CENTER
+                else -> FocusMode.AUTO_MULTI
             }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-    }
-
-    private fun setupManualFocusSeekbar(sp: com.hklab.hkruler.databinding.PanelSettingsBinding) {
-        // 일부 레이아웃/기기에서 미존재 가능성 방어
-        sp.seekManualFocus?.apply {
-            max = 1000
-            progress = (settings.manualFocusDistance * 1000).toInt().coerceIn(0, 1000)
-            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                    val dist = progress / 1000f
-                    settings = settings.copy(manualFocusDistance = dist)
-                    camera.applyFocusMode(settings) // 수동 포커스 갱신
-                    sp.txtManualFocusValue?.text = String.format("%.3f", dist)
-                }
-                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
-                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
-            })
-        } ?: run {
-            sp.rowManualFocus.visibility = View.GONE
+            settings = settings.copy(focusMode = newMode)
+            camera.applyFocusMode(settings)
         }
     }
 
