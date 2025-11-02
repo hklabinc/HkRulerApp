@@ -68,6 +68,14 @@ class MainActivity : AppCompatActivity() {
         checkAndStartCamera()
     }
 
+    /** Align Assist 상태에 따라 오버레이 가시성 동기화 */
+    private fun updateOverlayVisibility() {
+        binding.lineOverlay.visibility =
+            if (settings.alignAssist) View.VISIBLE else View.GONE
+        // 만약 LineOverlayView에 clear/reset API가 있다면 잔상까지 비우고 싶을 때 아래를 사용
+        // if (!settings.alignAssist) binding.lineOverlay.clear() // 또는 setLines(emptyList())
+    }
+    
     // ---- Init
     private fun initBinding() {
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -104,6 +112,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startCamera() {
         camera.bind(this, settings)
+        updateOverlayVisibility() // 바인딩 직후에도 오버레이 가시성 보정
         // EV 슬라이더는 카메라 바인딩 직후 약간의 지연 후 동기화
         binding.root.postDelayed({ bindEvUiFromCamera() }, EV_BIND_DELAY_MS)
     }
@@ -251,7 +260,8 @@ class MainActivity : AppCompatActivity() {
     private fun setupAspectAndAssist(sp: com.hklab.hkruler.databinding.PanelSettingsBinding) {
         sp.switchAlignAssist.setOnCheckedChangeListener { _, isChecked ->
             settings = settings.copy(alignAssist = isChecked)
-            rebindCameraAndRefreshEv()
+            updateOverlayVisibility()   // 스위치 조작 즉시 화면에서 선 숨기기/보이기
+            rebindCameraAndRefreshEv()  // Analyzer 유무 반영을 위해 재바인딩
         }
         sp.radioAspect16x9.setOnCheckedChangeListener { _, checked ->
             if (checked) {
@@ -269,6 +279,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun rebindCameraAndRefreshEv() {
         camera.bind(this@MainActivity, settings) // Preview/Capture/Analyzer 재구성
+        updateOverlayVisibility()                // 재바인딩 후에도 가시성 유지
         binding.root.post { bindEvUiFromCamera() } // 일부 기기에서 상태 재동기화 필요
     }
 
