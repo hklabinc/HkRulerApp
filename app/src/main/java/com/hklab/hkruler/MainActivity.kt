@@ -25,6 +25,13 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.media.MediaScannerConnection
+import androidx.core.content.FileProvider
+
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,6 +45,52 @@ class MainActivity : AppCompatActivity() {
     // ---- State
     private lateinit var binding: ActivityMainBinding
     private lateinit var camera: CameraController
+
+
+    // 시스템 카메라용 보류 URI/파일
+    private var pendingSystemPhotoUri: Uri? = null
+    private var pendingSystemPhotoFile: File? = null
+
+    // Android 9 이하: 시스템 카메라 사용 전 쓰기 권한 요청용
+    private val legacyWritePermissionForSystemLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) launchSystemCameraInternal()
+            else showToast("저장 권한이 없어 시스템 카메라를 사용할 수 없습니다.", long = true)
+        }
+
+    // 시스템 카메라 결과 처리
+    private val systemCameraLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val uri = pendingSystemPhotoUri
+            if (result.resultCode == Activity.RESULT_OK && uri != null) {
+                // API 28 이하에서 FileProvider 파일이면 미디어 스캔(갤러리 노출)
+                pendingSystemPhotoFile?.let { f ->
+                    if (f.exists()) {
+                        MediaScannerConnection.scanFile(
+                            this, arrayOf(f.absolutePath), arrayOf("image/jpeg"), null
+                        )
+                    }
+                }
+                showToast("시스템 카메라로 저장 완료")
+            } else {
+                // 취소/실패 시 예약 리소스 정리
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        uri != null && "content" == uri.scheme) {
+                        contentResolver.delete(uri, null, null)
+                    }
+                } catch (_: Exception) {}
+                try {
+                    pendingSystemPhotoFile?.let { f ->
+                        if (f.exists() && f.length() == 0L) f.delete()
+                    }
+                } catch (_: Exception) {}
+                showToast("취소되었습니다")
+            }
+            pendingSystemPhotoUri = null
+            pendingSystemPhotoFile = null
+        }
+
 
     private var settings = AppSettings(
         aspect = Aspect.R16_9,
@@ -99,6 +152,9 @@ class MainActivity : AppCompatActivity() {
 
         // Capture
         btnCapture.setOnClickListener { capturePhoto() }
+
+        // ✅ 추가
+        btnIntentCapture.setOnClickListener { launchSystemCamera() }
     }
 
     // ---- Permissions / Camera start
@@ -247,6 +303,87 @@ class MainActivity : AppCompatActivity() {
         updateOverlayVisibility()                // 재바인딩 후에도 가시성 유지
         binding.root.post { bindEvUiFromCamera() } // 일부 기기에서 상태 재동기화 필요
     }
+
+
+    private fun launchSystemCamera() {
+        // Android 9 이하: 퍼블릭 Pictures에 미리 파일 생성 시 권한 필요
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        ) {
+            legacyWritePermissionForSystemLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
+        }
+        launchSystemCameraInternal()
+    }
+
+    private fun launchSystemCameraInternal() {
+        val (outUri, outFile) = createOutputUriForSystemCamera()
+        pendingSystemPhotoUri = outUri
+        pendingSystemPhotoFile = outFile
+
+        val base = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, outUri)
+            // 타 앱(카메라)이 우리가 제공한 Uri에 쓸 수 있도록 권한 부여
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // 빠른 캡처(지원 기기 한정)
+            putExtra("android.intent.extra.quickCapture", true)
+        }
+
+        val targetPkg = "com.sec.android.app.camera"
+        val samsung = Intent(base).setPackage(targetPkg)
+
+        try {
+            // 삼성 카메라가 처리 가능하면 우선 사용, 아니면 기본 핸들러
+            val toLaunch = if (samsung.resolveActivity(packageManager) != null) samsung else base
+            // 명시 패키지일 때 Uri 권한 명시적 부여(일부 OEM 호환성)
+            toLaunch.`package`?.let { pkg ->
+                grantUriPermission(pkg, outUri,
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            systemCameraLauncher.launch(toLaunch)
+        } catch (e: Exception) {
+            showToast("카메라 앱 실행에 실패했습니다: ${e.localizedMessage}", long = true)
+            // 예약된 MediaStore 행/빈 파일 정리
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && "content" == outUri.scheme) {
+                try { contentResolver.delete(outUri, null, null) } catch (_: Exception) {}
+            } else {
+                outFile?.let { f -> if (f.exists() && f.length() == 0L) f.delete() }
+            }
+            pendingSystemPhotoUri = null
+            pendingSystemPhotoFile = null
+        }
+    }
+
+    private fun createOutputUriForSystemCamera(): Pair<Uri, File?> {
+        val displayName = "IMG_${filenameFormat.format(Date())}.jpg"
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // MediaStore에 선삽입 → Pictures/HkRuler 경로 지정
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/$STORAGE_FOLDER")
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("MediaStore insert 실패")
+            uri to null
+        } else {
+            // API 28 이하: 퍼블릭 Pictures/HkRuler에 파일 직접 생성 + FileProvider URI 반환
+            val dir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                STORAGE_FOLDER
+            ).apply { if (!exists()) mkdirs() }
+            val file = File(dir, displayName)
+            val uri = FileProvider.getUriForFile(
+                this, "${applicationContext.packageName}.fileprovider", file
+            )
+            uri to file
+        }
+    }
+
+
+
 
     // ---- Helpers
     private fun toggleSettingsPanel() {

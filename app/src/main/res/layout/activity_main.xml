@@ -73,6 +73,14 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal|bottom"
             android:layout_marginTop="16dp" />
+
+        <!-- ✅ Intent 버튼: 시스템 카메라 UI 실행 -->
+        <Button
+            android:id="@+id/btnIntentCapture"
+            android:text="Intent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

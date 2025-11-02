@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <external-files-path name="external_files" path="." />
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 공개 Pictures/HkRuler 경로 허용 -->
+    <external-path
+        name="external_pictures_hkruler"
+        path="Pictures/HkRuler/" />
 </paths>
