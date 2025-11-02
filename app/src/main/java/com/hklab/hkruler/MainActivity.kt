@@ -15,6 +15,16 @@ import com.hklab.hkruler.data.AppSettings
 import com.hklab.hkruler.data.Aspect
 import com.hklab.hkruler.data.FocusMode
 import com.hklab.hkruler.databinding.ActivityMainBinding
+import android.os.Build
+import android.provider.MediaStore
+import android.content.ContentValues
+import android.os.Environment
+import android.widget.Toast
+import androidx.camera.core.ImageCapture
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -24,6 +34,12 @@ class MainActivity : AppCompatActivity() {
         aspect = Aspect.R16_9,
         // 필요 시 초기값 조정
     )
+
+    private val requestLegacyWritePermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) capturePhotoInternal()
+            else Toast.makeText(this, "저장 권한이 없어 사진을 저장할 수 없습니다.", Toast.LENGTH_LONG).show()
+        }
 
     private val requestCameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -60,6 +76,64 @@ class MainActivity : AppCompatActivity() {
             startCamera()
         } else {
             requestCameraPermission.launch(Manifest.permission.CAMERA)
+        }
+
+        binding.btnCapture.setOnClickListener { capturePhoto() }
+
+    }
+
+    private fun capturePhoto() {
+        // API 28 이하에서는 퍼블릭 저장소에 파일 생성 시 권한 필요
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                requestLegacyWritePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                return
+            }
+        }
+        capturePhotoInternal()
+    }
+
+    private fun capturePhotoInternal() {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val displayName = "IMG_${timestamp}.jpg"
+
+        val outputOptions: ImageCapture.OutputFileOptions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // MediaStore(스코프 저장소) → Pictures/HkRuler
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/HkRuler"
+                    )
+                }
+                val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                ImageCapture.OutputFileOptions.Builder(contentResolver, uri, values).build()
+            } else {
+                // API 28 이하 → 퍼블릭 Pictures/HkRuler 디렉터리 직접 생성 후 저장
+                val dir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    "HkRuler"
+                ).apply { if (!exists()) mkdirs() }
+                val file = File(dir, displayName)
+                ImageCapture.OutputFileOptions.Builder(file).build()
+            }
+
+        // 연속 탭 방지
+        binding.btnCapture.isEnabled = false
+
+        // CameraController의 takePicture 사용 (이미 구현되어 있음)
+        camera.takePicture(outputOptions) { ok, err ->
+            binding.btnCapture.isEnabled = true
+            if (ok) {
+                Toast.makeText(this, "사진이 저장되었습니다: Pictures/HkRuler/$displayName", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "저장 실패: ${err ?: "알 수 없는 오류"}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
