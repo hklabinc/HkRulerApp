@@ -30,7 +30,7 @@ import android.content.Intent
 import android.net.Uri
 import android.media.MediaScannerConnection
 import androidx.core.content.FileProvider
-
+import android.content.ActivityNotFoundException
 
 
 class MainActivity : AppCompatActivity() {
@@ -154,7 +154,8 @@ class MainActivity : AppCompatActivity() {
         btnCapture.setOnClickListener { capturePhoto() }
 
         // ✅ 추가
-        btnIntentCapture.setOnClickListener { launchSystemCamera() }
+//        btnIntentCapture.setOnClickListener { launchSystemCamera() }
+        btnIntentCapture.setOnClickListener { openSamsungCameraFullUi() }
     }
 
     // ---- Permissions / Camera start
@@ -303,6 +304,29 @@ class MainActivity : AppCompatActivity() {
         updateOverlayVisibility()                // 재바인딩 후에도 가시성 유지
         binding.root.post { bindEvUiFromCamera() } // 일부 기기에서 상태 재동기화 필요
     }
+
+
+    // 삼성 카메라 전체 UI(프로 모드 포함)만 실행하는 함수로 교체
+    private fun openSamsungCameraFullUi() {
+        val samsungPkg = "com.sec.android.app.camera"
+
+        // ✅ 1순위: 런처(홈 아이콘을 누른 것과 동일) — 마지막 모드 유지 가능
+        val launchSamsung = packageManager.getLaunchIntentForPackage(samsungPkg)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            // **주의**: quickCapture 같은 extra 절대 넣지 않음
+        }
+
+        // ❗ 삼성 카메라가 없을 때만 일반 '전체 카메라 UI'로 폴백
+        val genericStillUi = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+
+        val toLaunch = launchSamsung ?: genericStillUi
+        try {
+            startActivity(toLaunch)
+        } catch (e: ActivityNotFoundException) {
+            showToast("카메라 앱을 열 수 없습니다: ${e.localizedMessage}", long = true)
+        }
+    }
+
 
 
     private fun launchSystemCamera() {

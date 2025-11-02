@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- ✅ Android 11+ 패키지 가시성: 전체 카메라 UI와 삼성 카메라 패키지 조회 허용 -->
+    <queries>
+        <package android:name="com.sec.android.app.camera"/>
+        <intent>
+            <action android:name="android.media.action.STILL_IMAGE_CAMERA"/>
+        </intent>
+    </queries>
+    
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera.any" />
     <!-- Android 13+ 갤러리 저장 시 권장 -->
