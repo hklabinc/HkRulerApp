@@ -2,6 +2,7 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
@@ -24,7 +25,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@id/guideline80" />
 
-    <!-- Overlay -->
+    <!-- Overlay (정렬 보조선) -->
     <com.hklab.hkruler.processing.LineOverlayView
         android:id="@+id/lineOverlay"
         android:layout_width="0dp"
@@ -34,6 +35,57 @@
         app:layout_constraintBottom_toBottomOf="@id/previewView"
         app:layout_constraintStart_toStartOf="@id/previewView"
         app:layout_constraintEnd_toEndOf="@id/previewView" />
+
+    <!-- ✅ 캡처 미리보기 오버레이(PreviewView 위를 덮음) -->
+    <FrameLayout
+        android:id="@+id/previewOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#CC000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="@id/previewView"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView">
+
+        <ImageView
+            android:id="@+id/imagePreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/app_name"
+            android:scaleType="fitCenter"
+            tools:src="@android:drawable/ic_menu_gallery" />
+
+        <!-- 하단 버튼 바: 취소 / 저장 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:padding="12dp"
+            android:layout_gravity="bottom">
+
+            <Button
+                android:id="@+id/btnPreviewCancel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="취소" />
+
+            <View
+                android:layout_width="12dp"
+                android:layout_height="0dp" />
+
+            <Button
+                android:id="@+id/btnPreviewSave"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="저장" />
+        </LinearLayout>
+    </FrameLayout>
 
     <!-- ===== 오른쪽 제어 영역 (20%) ===== -->
     <LinearLayout
@@ -65,6 +117,19 @@
             android:visibility="gone"
             android:layout_marginBottom="8dp" />
 
+        <!-- ✅ 촬영 정보(파일명 / 해상도 / 크기) -->
+        <TextView
+            android:id="@+id/txtShotInfo"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textColor="@android:color/darker_gray"
+            android:textSize="9sp"
+            tools:text="IMG_20251106_123456.jpg\n4000×3000 · 2.4 MB" />
+
         <!-- Capture 버튼 -->
         <Button
             android:id="@+id/btnCapture"
@@ -74,7 +139,7 @@
             android:layout_gravity="center_horizontal|bottom"
             android:layout_marginTop="16dp" />
 
-        <!-- ✅ Intent 버튼: 시스템 카메라 UI 실행 -->
+        <!-- 시스템 카메라(전체 UI) 실행 버튼 -->
         <Button
             android:id="@+id/btnIntentCapture"
             android:text="Intent"

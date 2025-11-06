@@ -20,10 +20,13 @@ import com.hklab.hkruler.data.Aspect
 import com.hklab.hkruler.data.FocusMode
 import com.hklab.hkruler.databinding.ActivityMainBinding
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -31,13 +34,14 @@ import androidx.core.content.FileProvider
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.hklab.hkruler.autoreturn.ReturnAccessibilityService
+import com.hklab.hkruler.autoreturn.ReturnWatcherService
 
 import android.app.ActivityOptions
+import android.hardware.display.DisplayManager
 import android.view.Display
 import android.app.UiModeManager
 import android.content.res.Configuration
-import com.hklab.hkruler.autoreturn.ReturnWatcherService
-
+import android.graphics.BitmapFactory
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,6 +49,9 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         private const val STORAGE_FOLDER = "HkRuler"
         private const val EV_BIND_DELAY_MS = 200L
+        private const val REQ_NOTI = 1001
+        private const val REQ_READ_IMAGES = 1002
+        private const val REQ_READ_EXT = 1003
         private const val RETURN_CH_ID = "return_to_hkruler"
     }
 
@@ -57,8 +64,18 @@ class MainActivity : AppCompatActivity() {
     private var pendingSystemPhotoUri: Uri? = null
     private var pendingSystemPhotoFile: File? = null
 
+    // ✅ 인앱 캡처 미리보기용 임시 파일 상태
+    private var pendingPreviewFile: File? = null
+    private var pendingDisplayName: String? = null
+
     // 파일명 포맷터
     private val filenameFormat by lazy { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US) }
+
+    // 권한 요청 런처들
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startCamera() else finish()
+        }
 
     private val legacyWritePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -71,6 +88,13 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) launchSystemCameraInternal()
             else showToast("저장 권한이 없어 시스템 카메라를 사용할 수 없습니다.", long = true)
+        }
+
+    // ✅ Android 9 이하: 미리보기에서 “저장” 시 퍼블릭 저장 권한 요청
+    private val legacyWritePermissionForPreviewSaveLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) reallySavePendingPreviewToGallery()
+            else showToast("저장 권한이 없어 사진을 저장할 수 없습니다.", long = true)
         }
 
     // 시스템 카메라 결과 처리
@@ -106,53 +130,11 @@ class MainActivity : AppCompatActivity() {
             pendingSystemPhotoFile = null
         }
 
-    // 여러 권한 동시 요청 런처들
-    private val allPermissionsLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-            val allGranted = results.values.all { it == true }
-            if (allGranted) {
-                startCamera()
-            } else {
-                // 일부 거부됨: 안내 후 종료 또는 설정 화면 유도
-                showToast("필수 권한이 거부되어 앱을 종료합니다. 설정에서 권한을 허용해주세요.", long = true)
-                finish()
-            }
-        }
-
-    private fun buildInitialPermissionList(): Array<String> {
-        val needed = mutableListOf(Manifest.permission.CAMERA)
-
-        if (Build.VERSION.SDK_INT >= 33) {
-            // Android 13+ : 알림, 미디어 이미지
-            needed += Manifest.permission.POST_NOTIFICATIONS
-            needed += Manifest.permission.READ_MEDIA_IMAGES
-        } else if (Build.VERSION.SDK_INT >= 29) {
-            // Android 10~12 : 외부 저장 읽기
-            needed += Manifest.permission.READ_EXTERNAL_STORAGE
-        } else {
-            // Android 9 이하 : 외부 저장 쓰기
-            needed += Manifest.permission.WRITE_EXTERNAL_STORAGE
-        }
-
-        // 이미 허용된 것은 제외
-        return needed.filterNot { hasPermission(it) }.toTypedArray()
-    }
-
-    private fun ensureAllInitialPermissions(onAllGranted: () -> Unit) {
-        val missing = buildInitialPermissionList()
-        if (missing.isEmpty()) {
-            onAllGranted()
-        } else {
-            allPermissionsLauncher.launch(missing)
-        }
-    }
-
-
     // ---- Lifecycle
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ✅ 외부 디스플레이/DeX에서 뜬 경우 → 폰 화면에 프록시를 띄워 재앵커 후 종료
+        // ✅ 외부 디스플레이/DeX 등에서 실행되면 폰 화면으로 재앵커 (기존 동작 보존)
         val alreadyReanchored = intent?.getBooleanExtra(PhoneDisplayProxyActivity.EXTRA_REANCHORED, false) ?: false
         if (!alreadyReanchored && isDexLikeOrExternal()) {
             val proxy = Intent(this, PhoneDisplayProxyActivity::class.java).apply {
@@ -167,12 +149,21 @@ class MainActivity : AppCompatActivity() {
         initCameraController()
         initUi()
         createReturnChannel()
+        checkAndStartCamera()
 
-        // ✅ 첫 실행 권한을 한 번에 요청 → 모두 허용되면 카메라 시작
-        ensureAllInitialPermissions {
-            startCamera()
-            // EV UI 바인딩 지연은 기존 그대로 유지
-            binding.root.postDelayed({ bindEvUiFromCamera() }, EV_BIND_DELAY_MS)
+        // 알림 권한(안드13+)
+        if (Build.VERSION.SDK_INT >= 33 && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTI)
+        }
+        // 이미지 읽기 권한 (MediaStore 접근용)
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (!hasPermission(Manifest.permission.READ_MEDIA_IMAGES)) {
+                requestPermissions(arrayOf(Manifest.permission.READ_MEDIA_IMAGES), REQ_READ_IMAGES)
+            }
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            if (!hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_READ_EXT)
+            }
         }
     }
 
@@ -193,11 +184,15 @@ class MainActivity : AppCompatActivity() {
         btnSettings.setOnClickListener { toggleSettingsPanel() }
         setupSettingsUi()
 
-        // 내장 촬영
+        // 인앱 촬영(미리보기)
         btnCapture.setOnClickListener { capturePhoto() }
 
-        // 삼성 카메라 전체 UI(프로 모드 포함) 실행
+        // 삼성 카메라(전체 UI, 프로 모드 포함) 실행
         btnIntentCapture.setOnClickListener { openSamsungCameraFullUi() }
+
+        // ✅ 미리보기 저장/취소
+        btnPreviewSave.setOnClickListener { onClickSavePreview() }
+        btnPreviewCancel.setOnClickListener { onClickCancelPreview() }
     }
 
     private fun createReturnChannel() {
@@ -210,57 +205,163 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- Camera start
+    private fun checkAndStartCamera() {
+        if (hasPermission(Manifest.permission.CAMERA)) {
+            startCamera()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     private fun startCamera() {
         camera.bind(this, settings)
         updateOverlayVisibility()
         binding.root.postDelayed({ bindEvUiFromCamera() }, EV_BIND_DELAY_MS)
     }
 
-    // ---- Capture (in-app)
+    // ---- Capture (show preview first)
     private fun capturePhoto() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-            legacyWritePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            return
-        }
+        // ※ 이전에는 API 28 이하에서 퍼블릭 저장 권한을 먼저 요구했지만,
+        //    지금은 '임시 파일'에 저장 후 사용자가 저장을 누를 때만 퍼블릭 저장으로 이동합니다.
         capturePhotoInternal()
     }
 
+    /** 임시 파일로 캡처 → 미리보기 오버레이 표시 */
     private fun capturePhotoInternal() {
-        val (outputOptions, displayName) = buildOutputOptions()
+        // 1) 임시 파일 생성(앱 캐시)
+        val temp = File.createTempFile("HkRuler_", ".jpg", cacheDir)
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(temp).build()
+        val displayName = "IMG_${filenameFormat.format(Date())}.jpg"
+
+        // 2) 촬영
         binding.btnCapture.isEnabled = false
         camera.takePicture(outputOptions) { ok, err ->
             binding.btnCapture.isEnabled = true
-            if (ok) {
-                showToast("사진이 저장되었습니다: Pictures/$STORAGE_FOLDER/$displayName")
-            } else {
-                showToast("저장 실패: ${err ?: "알 수 없는 오류"}", long = true)
+            if (!ok) {
+                temp.delete()
+                showToast("촬영 실패: ${err ?: "알 수 없는 오류"}", long = true)
+                return@takePicture
             }
+            // 3) 상태 보관 + 미리보기 표시
+            pendingPreviewFile = temp
+            pendingDisplayName = displayName
+            showPreviewOverlay(temp, displayName)
         }
     }
 
-    private fun buildOutputOptions(): Pair<ImageCapture.OutputFileOptions, String> {
-        val displayName = "IMG_${filenameFormat.format(Date())}.jpg"
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    /** 미리보기 오버레이 표시 + 정보 갱신 */
+    private fun showPreviewOverlay(file: File, displayName: String) {
+        // 이미지 표시
+        binding.imagePreview.setImageURI(Uri.fromFile(file))
+
+        // 해상도/크기 읽기
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, opts)
+        val w = opts.outWidth
+        val h = opts.outHeight
+        val size = file.length()
+
+        binding.txtShotInfo.text = buildString {
+            append(displayName)
+            if (w > 0 && h > 0) append(" ${w}×${h}")
+            append(" (${readableBytes(size)})")
+        }
+
+        binding.previewOverlay.visibility = View.VISIBLE
+    }
+
+    /** 미리보기 → 저장 버튼 */
+    private fun onClickSavePreview() {
+        if (pendingPreviewFile == null || pendingDisplayName == null) {
+            hidePreviewOverlay()
+            return
+        }
+        // API 28 이하: 퍼블릭 폴더에 쓰기 권한 필요
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            legacyWritePermissionForPreviewSaveLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
+        }
+        reallySavePendingPreviewToGallery()
+    }
+
+    /** 미리보기 → 취소 버튼 */
+    private fun onClickCancelPreview() {
+        pendingPreviewFile?.let { runCatching { it.delete() } }
+        pendingPreviewFile = null
+        pendingDisplayName = null
+        binding.txtShotInfo.text = ""
+        hidePreviewOverlay()
+    }
+
+    /** 실제 저장 수행(권한 보장 하에 호출) */
+    private fun reallySavePendingPreviewToGallery() {
+        val src = pendingPreviewFile ?: return
+        val displayName = pendingDisplayName ?: "IMG_${filenameFormat.format(Date())}.jpg"
+
+        val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // 스코프 저장소 → Pictures/HkRuler
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
                 put(MediaStore.MediaColumns.RELATIVE_PATH,
                     Environment.DIRECTORY_PICTURES + "/$STORAGE_FOLDER")
             }
-            val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            ImageCapture.OutputFileOptions.Builder(contentResolver, uri, values).build() to displayName
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                runCatching {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        FileInputStream(src).use { it.copyTo(out) }
+                    }
+                }.isSuccess
+            } else false
         } else {
+            // API 28 이하 → 퍼블릭 Pictures/HkRuler로 복사
             val dir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
                 STORAGE_FOLDER
             ).apply { if (!exists()) mkdirs() }
-            val file = File(dir, displayName)
-            ImageCapture.OutputFileOptions.Builder(file).build() to displayName
+            val dst = File(dir, displayName)
+            runCatching {
+                FileInputStream(src).use { input ->
+                    FileOutputStream(dst).use { output -> input.copyTo(output) }
+                }
+                // 갤러리 스캔
+                MediaScannerConnection.scanFile(
+                    this, arrayOf(dst.absolutePath), arrayOf("image/jpeg"), null
+                )
+            }.isSuccess
+        }
+
+        if (ok) {
+            showToast("사진이 저장되었습니다: Pictures/$STORAGE_FOLDER/$displayName")
+            runCatching { src.delete() }
+        } else {
+            showToast("저장 실패(파일 복사 중 오류)", long = true)
+        }
+
+        // 상태/오버레이 정리
+        pendingPreviewFile = null
+        pendingDisplayName = null
+        binding.previewOverlay.visibility = View.GONE
+    }
+
+    private fun hidePreviewOverlay() {
+        binding.imagePreview.setImageDrawable(null)
+        binding.previewOverlay.visibility = View.GONE
+    }
+
+    private fun readableBytes(bytes: Long): String {
+        val kb = 1024.0
+        val mb = kb * 1024
+        return when {
+            bytes >= mb -> String.format(Locale.US, "%.1f MB", bytes / mb)
+            bytes >= kb -> String.format(Locale.US, "%.0f KB", bytes / kb)
+            else -> "$bytes B"
         }
     }
 
-    // ---- EV / Settings
+    // ---- EV / Settings (기존 유지)
     private fun bindEvUiFromCamera() {
         val state = camera.exposureState ?: run {
             binding.settingsPanel.rowEv.visibility = View.GONE
@@ -332,40 +433,23 @@ class MainActivity : AppCompatActivity() {
         binding.lineOverlay.visibility = if (settings.alignAssist) View.VISIBLE else View.GONE
     }
 
-    // ---- 삼성 카메라(전체 UI, 프로 모드 유지)
+    // ---- 삼성 카메라(전체 UI, 프로 모드 유지) — 기존 유지
     private fun openSamsungCameraFullUi() {
-        // (선택) 접근성 ON 유도: 항상 자동 복귀를 원한다면 켜두는 것을 권장
         if (!ReturnAccessibilityService.isEnabled(this)) {
-            showToast("항상 자동 복귀를 원하면 '설정 > 접근성 > HkRuler'를 켜주세요.")
+            showToast("항상 자동 복귀를 원하면 '설정 > 접근성 > HkRuler'를 켜주세요.", long = true)
         }
-
-        // 1) Foreground Service 시작(감지/복귀 전담)
         val launchAt = System.currentTimeMillis()
         val svc = Intent(this, ReturnWatcherService::class.java)
             .putExtra(ReturnWatcherService.EXTRA_LAUNCH_AT, launchAt)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
 
-        // 2) 삼성 카메라를 ‘항상 폰 화면’에서 실행: 프록시로 위임
         val proxy = Intent(this, PhoneDisplayProxyActivity::class.java).apply {
             action = PhoneDisplayProxyActivity.ACTION_OPEN_CAMERA
         }
         startOnPhoneDisplay(proxy)
-
-//        // 2) 삼성 카메라 전체 UI 실행 (런처 인텐트 우선)
-//        val samsungPkg = "com.sec.android.app.camera"
-//        val launchSamsung = packageManager.getLaunchIntentForPackage(samsungPkg)?.apply {
-//            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-//        }
-//        val genericStillUi = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-//
-//        try {
-//            startActivity(launchSamsung ?: genericStillUi)
-//        } catch (e: ActivityNotFoundException) {
-//            showToast("카메라 앱을 열 수 없습니다: ${e.localizedMessage}", long = true)
-//        }
     }
 
-    // ---- 시스템 카메라 (필요 시 사용)
+    // ---- 시스템 카메라(필요 시) — 기존 유지
     private fun launchSystemCamera() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
@@ -443,35 +527,26 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, msg, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
     }
 
-
-
-    /** 현재 컨텍스트가 DeX/외부 디스플레이로 보이는지 대략 판정 */
+    /** 현재 컨텍스트가 DeX/외부 디스플레이로 보이는지 대략 판정(기존 코드 유지) */
     private fun isDexLikeOrExternal(): Boolean {
         val displayId = if (Build.VERSION.SDK_INT >= 30) this.display?.displayId else null
         val um = getSystemService(UiModeManager::class.java)
         val isDesk = resources.configuration.uiMode and
                 Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_DESK
-        // displayId가 null이면 보수적으로 false 취급
         return (displayId != null && displayId != Display.DEFAULT_DISPLAY) || isDesk
     }
 
     /** 주어진 Intent를 ‘휴대폰 내장 디스플레이(기본 디스플레이)’에서 실행(가능하면) */
     private fun startOnPhoneDisplay(intent: Intent) {
-        // API 28(P)+ 에서만 디스플레이 지정 가능
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 val opts = ActivityOptions.makeBasic().apply {
-                    // ✨ '폰 화면'인 기본 디스플레이로 강제
                     setLaunchDisplayId(Display.DEFAULT_DISPLAY)
                 }
                 startActivity(intent, opts.toBundle())
                 return
-            } catch (_: Throwable) {
-                // 일부 기기 정책/버전에서 무시될 수 있으므로 폴백
-            }
+            } catch (_: Throwable) { /* fallback below */ }
         }
-        // 폴백: 일반 실행
         startActivity(intent)
     }
-
 }
