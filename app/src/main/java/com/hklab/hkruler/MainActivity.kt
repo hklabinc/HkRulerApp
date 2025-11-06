@@ -33,6 +33,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.hklab.hkruler.access.AutoReturnAccessService
 
+import android.app.ActivityOptions
+import android.hardware.display.DisplayManager
+import android.view.Display
+import android.app.UiModeManager
+import android.content.res.Configuration
+
+
 class MainActivity : AppCompatActivity() {
 
     // ---- Constants
@@ -112,6 +119,19 @@ class MainActivity : AppCompatActivity() {
     // ---- Lifecycle
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ✅ 외부 디스플레이/DeX에서 뜬 경우 → 폰 화면에 프록시를 띄워 재앵커 후 종료
+        val alreadyReanchored = intent?.getBooleanExtra(PhoneDisplayProxyActivity.EXTRA_REANCHORED, false) ?: false
+        if (!alreadyReanchored && isDexLikeOrExternal()) {
+            val proxy = Intent(this, PhoneDisplayProxyActivity::class.java).apply {
+                action = PhoneDisplayProxyActivity.ACTION_OPEN_MAIN
+            }
+            startOnPhoneDisplay(proxy)
+            finish()
+            return
+        }
+
+
         initBinding()
         initCameraController()
         initUi()
@@ -311,18 +331,24 @@ class MainActivity : AppCompatActivity() {
             .putExtra(AutoReturnService.EXTRA_LAUNCH_AT, launchAt)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
 
-        // 2) 삼성 카메라 전체 UI 실행 (런처 인텐트 우선)
-        val samsungPkg = "com.sec.android.app.camera"
-        val launchSamsung = packageManager.getLaunchIntentForPackage(samsungPkg)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        // 2) 삼성 카메라를 ‘항상 폰 화면’에서 실행: 프록시로 위임
+        val proxy = Intent(this, PhoneDisplayProxyActivity::class.java).apply {
+            action = PhoneDisplayProxyActivity.ACTION_OPEN_CAMERA
         }
-        val genericStillUi = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+        startOnPhoneDisplay(proxy)
 
-        try {
-            startActivity(launchSamsung ?: genericStillUi)
-        } catch (e: ActivityNotFoundException) {
-            showToast("카메라 앱을 열 수 없습니다: ${e.localizedMessage}", long = true)
-        }
+//        // 2) 삼성 카메라 전체 UI 실행 (런처 인텐트 우선)
+//        val samsungPkg = "com.sec.android.app.camera"
+//        val launchSamsung = packageManager.getLaunchIntentForPackage(samsungPkg)?.apply {
+//            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+//        }
+//        val genericStillUi = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+//
+//        try {
+//            startActivity(launchSamsung ?: genericStillUi)
+//        } catch (e: ActivityNotFoundException) {
+//            showToast("카메라 앱을 열 수 없습니다: ${e.localizedMessage}", long = true)
+//        }
     }
 
     // ---- 시스템 카메라 (필요 시 사용)
@@ -402,4 +428,36 @@ class MainActivity : AppCompatActivity() {
     private fun showToast(msg: String, long: Boolean = false) {
         Toast.makeText(this, msg, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
     }
+
+
+
+    /** 현재 컨텍스트가 DeX/외부 디스플레이로 보이는지 대략 판정 */
+    private fun isDexLikeOrExternal(): Boolean {
+        val displayId = if (Build.VERSION.SDK_INT >= 30) this.display?.displayId else null
+        val um = getSystemService(UiModeManager::class.java)
+        val isDesk = resources.configuration.uiMode and
+                Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_DESK
+        // displayId가 null이면 보수적으로 false 취급
+        return (displayId != null && displayId != Display.DEFAULT_DISPLAY) || isDesk
+    }
+
+    /** 주어진 Intent를 ‘휴대폰 내장 디스플레이(기본 디스플레이)’에서 실행(가능하면) */
+    private fun startOnPhoneDisplay(intent: Intent) {
+        // API 28(P)+ 에서만 디스플레이 지정 가능
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                val opts = ActivityOptions.makeBasic().apply {
+                    // ✨ '폰 화면'인 기본 디스플레이로 강제
+                    setLaunchDisplayId(Display.DEFAULT_DISPLAY)
+                }
+                startActivity(intent, opts.toBundle())
+                return
+            } catch (_: Throwable) {
+                // 일부 기기 정책/버전에서 무시될 수 있으므로 폴백
+            }
+        }
+        // 폴백: 일반 실행
+        startActivity(intent)
+    }
+
 }
