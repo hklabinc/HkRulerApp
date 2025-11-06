@@ -45,9 +45,6 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         private const val STORAGE_FOLDER = "HkRuler"
         private const val EV_BIND_DELAY_MS = 200L
-        private const val REQ_NOTI = 1001
-        private const val REQ_READ_IMAGES = 1002
-        private const val REQ_READ_EXT = 1003
         private const val RETURN_CH_ID = "return_to_hkruler"
     }
 
@@ -62,12 +59,6 @@ class MainActivity : AppCompatActivity() {
 
     // 파일명 포맷터
     private val filenameFormat by lazy { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US) }
-
-    // 권한 요청 런처들
-    private val cameraPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startCamera() else finish()
-        }
 
     private val legacyWritePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -115,6 +106,48 @@ class MainActivity : AppCompatActivity() {
             pendingSystemPhotoFile = null
         }
 
+    // 여러 권한 동시 요청 런처들
+    private val allPermissionsLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            val allGranted = results.values.all { it == true }
+            if (allGranted) {
+                startCamera()
+            } else {
+                // 일부 거부됨: 안내 후 종료 또는 설정 화면 유도
+                showToast("필수 권한이 거부되어 앱을 종료합니다. 설정에서 권한을 허용해주세요.", long = true)
+                finish()
+            }
+        }
+
+    private fun buildInitialPermissionList(): Array<String> {
+        val needed = mutableListOf(Manifest.permission.CAMERA)
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            // Android 13+ : 알림, 미디어 이미지
+            needed += Manifest.permission.POST_NOTIFICATIONS
+            needed += Manifest.permission.READ_MEDIA_IMAGES
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            // Android 10~12 : 외부 저장 읽기
+            needed += Manifest.permission.READ_EXTERNAL_STORAGE
+        } else {
+            // Android 9 이하 : 외부 저장 쓰기
+            needed += Manifest.permission.WRITE_EXTERNAL_STORAGE
+        }
+
+        // 이미 허용된 것은 제외
+        return needed.filterNot { hasPermission(it) }.toTypedArray()
+    }
+
+    private fun ensureAllInitialPermissions(onAllGranted: () -> Unit) {
+        val missing = buildInitialPermissionList()
+        if (missing.isEmpty()) {
+            onAllGranted()
+        } else {
+            allPermissionsLauncher.launch(missing)
+        }
+    }
+
+
     // ---- Lifecycle
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -130,26 +163,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-
         initBinding()
         initCameraController()
         initUi()
         createReturnChannel()
-        checkAndStartCamera()
 
-        // 알림 권한(안드13+)
-        if (Build.VERSION.SDK_INT >= 33 && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTI)
-        }
-        // 이미지 읽기 권한 (MediaStore 접근용)
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (!hasPermission(Manifest.permission.READ_MEDIA_IMAGES)) {
-                requestPermissions(arrayOf(Manifest.permission.READ_MEDIA_IMAGES), REQ_READ_IMAGES)
-            }
-        } else if (Build.VERSION.SDK_INT >= 29) {
-            if (!hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-                requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_READ_EXT)
-            }
+        // ✅ 첫 실행 권한을 한 번에 요청 → 모두 허용되면 카메라 시작
+        ensureAllInitialPermissions {
+            startCamera()
+            // EV UI 바인딩 지연은 기존 그대로 유지
+            binding.root.postDelayed({ bindEvUiFromCamera() }, EV_BIND_DELAY_MS)
         }
     }
 
@@ -187,14 +210,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- Camera start
-    private fun checkAndStartCamera() {
-        if (hasPermission(Manifest.permission.CAMERA)) {
-            startCamera()
-        } else {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-    }
-
     private fun startCamera() {
         camera.bind(this, settings)
         updateOverlayVisibility()
