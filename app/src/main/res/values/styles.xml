@@ -1,0 +1,14 @@
+<resources>
+    <style name="Theme.HkRuler.EdgeToEdge" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 컷아웃(노치/홀) 영역까지 그리기 (API 28+) -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+
+        <!-- 엣지-투-엣지: 시스템 바 투명화 -->
+<!--        <item name="android:statusBarColor">@android:color/transparent</item>-->
+<!--        <item name="android:navigationBarColor">@android:color/transparent</item>-->
+
+        <!-- 대비 강제 비활성화: 검은 띠 방지 -->
+<!--        <item name="android:enforceStatusBarContrast">false</item>-->
+<!--        <item name="android:enforceNavigationBarContrast">false</item>-->
+    </style>
+</resources>
