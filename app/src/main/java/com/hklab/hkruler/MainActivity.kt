@@ -32,14 +32,39 @@ import android.media.MediaScannerConnection
 import androidx.core.content.FileProvider
 import android.content.ActivityNotFoundException
 
+import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.TaskStackBuilder
+import android.app.PendingIntent
+import androidx.annotation.RequiresPermission
+import android.os.FileObserver
 
 class MainActivity : AppCompatActivity() {
+
+    // --- Auto return 감지/알림용
+    private var mediaObserver: ContentObserver? = null
+    private var fileObserver: FileObserver? = null
+    private var autoReturnArmed = false
+    private var cameraLaunchAt: Long = 0L
+    private var isInForeground = false
+
 
     // ---- Constants
     private companion object {
         private const val STORAGE_FOLDER = "HkRuler"
         private const val EV_BIND_DELAY_MS = 200L
-        private val FOCUS_MODE_LABELS = listOf("Auto (Multi)", "Auto (Center)")
+        private const val RETURN_CH_ID = "return_to_hkruler"
+        private const val RETURN_NOTI_ID = 2201
+
+        private const val REQ_NOTI = 1001
+        private const val REQ_READ_IMAGES = 1002
+        private const val REQ_READ_EXT = 1003
     }
 
     // ---- State
@@ -118,8 +143,34 @@ class MainActivity : AppCompatActivity() {
         initBinding()
         initCameraController()
         initUi()
+        createReturnChannel()
         checkAndStartCamera()
+
+        // 알림 권한(안드13+)
+        if (Build.VERSION.SDK_INT >= 33 && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTI)
+        }
+        // ✅ 이미지 읽기 권한
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (!hasPermission(Manifest.permission.READ_MEDIA_IMAGES)) {
+                requestPermissions(arrayOf(Manifest.permission.READ_MEDIA_IMAGES), REQ_READ_IMAGES)
+            }
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            if (!hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_READ_EXT)
+            }
+        }
     }
+
+    private fun createReturnChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                RETURN_CH_ID, "Return to HkRuler", NotificationManager.IMPORTANCE_HIGH
+            )
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(ch)
+        }
+    }
+
 
     /** Align Assist 상태에 따라 오버레이 가시성 동기화 */
     private fun updateOverlayVisibility() {
@@ -310,21 +361,203 @@ class MainActivity : AppCompatActivity() {
     private fun openSamsungCameraFullUi() {
         val samsungPkg = "com.sec.android.app.camera"
 
-        // ✅ 1순위: 런처(홈 아이콘을 누른 것과 동일) — 마지막 모드 유지 가능
-        val launchSamsung = packageManager.getLaunchIntentForPackage(samsungPkg)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            // **주의**: quickCapture 같은 extra 절대 넣지 않음
+        // 1) 감지 무장
+        cameraLaunchAt = System.currentTimeMillis()
+        autoReturnArmed = true
+
+        // 2) 권한이 있으면 즉시 등록 (없으면 권한 응답에서 등록됨)
+        if (canWatchMediaStore()) {
+            registerMediaObserverForReturn()
+            startFileObserverForReturn()
         }
 
-        // ❗ 삼성 카메라가 없을 때만 일반 '전체 카메라 UI'로 폴백
+        // 3) 전체 UI 실행 (런처 우선, 폴백: 기본 전체 카메라)
+        val launchSamsung = packageManager.getLaunchIntentForPackage(samsungPkg)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
         val genericStillUi = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-
-        val toLaunch = launchSamsung ?: genericStillUi
         try {
-            startActivity(toLaunch)
+            startActivity(launchSamsung ?: genericStillUi)
         } catch (e: ActivityNotFoundException) {
             showToast("카메라 앱을 열 수 없습니다: ${e.localizedMessage}", long = true)
         }
+
+        // (선택) 알림 권한 요청 트리거
+        if (Build.VERSION.SDK_INT >= 33 &&
+            !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTI)
+        }
+    }
+
+    private fun startFileObserverForReturn() {
+        if (fileObserver != null) return
+        val dcim = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+        val cameraDir = File(dcim, "Camera")
+        fileObserver = object : FileObserver(cameraDir.absolutePath, CREATE or MOVED_TO) {
+            override fun onEvent(event: Int, path: String?) {
+                if (!autoReturnArmed || path.isNullOrEmpty()) return
+                val lower = path.lowercase(Locale.US)
+                if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                    lower.endsWith(".heic") || lower.endsWith(".dng"))
+                {
+                    runOnUiThread { onPhotoDetected() }
+                }
+            }
+        }.apply { startWatching() }
+    }
+
+    private fun stopFileObserver() {
+        fileObserver?.stopWatching()
+        fileObserver = null
+    }
+
+    private fun onPhotoDetected() {
+        autoReturnArmed = false
+        unregisterMediaObserver()
+        stopFileObserver()
+        tryBringToFrontOrNotify()
+    }
+
+    private fun tryBringToFrontOrNotify() {
+        bringTaskToFront()
+        // ❶ 전면 복귀 시도 후 600ms 지연 관찰: 여전히 백그라운드면 알림
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isInForeground) showReturnHeadsUp()
+        }, 600)
+    }
+
+
+    private fun canWatchMediaStore(): Boolean {
+        return if (Build.VERSION.SDK_INT >= 33) {
+            hasPermission(Manifest.permission.READ_MEDIA_IMAGES)
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else true
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if ((requestCode == REQ_READ_IMAGES || requestCode == REQ_READ_EXT)
+            && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            if (autoReturnArmed) {
+                registerMediaObserverForReturn()
+                startFileObserverForReturn()
+            }
+        }
+    }
+
+
+    private fun registerMediaObserverForReturn() {
+        if (mediaObserver != null) return
+        mediaObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                super.onChange(selfChange, uri)
+                if (!autoReturnArmed) return
+                if (checkNewPhotoFromSamsung()) onPhotoDetected()
+            }
+        }
+        contentResolver.registerContentObserver(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            true,
+            mediaObserver!!
+        )
+    }
+
+
+
+    private fun unregisterMediaObserver() {
+        mediaObserver?.let { contentResolver.unregisterContentObserver(it) }
+        mediaObserver = null
+    }
+
+    /** 촬영 후 '새 이미지'를 삼성 카메라에서 기록했는지 확인 */
+    private fun checkNewPhotoFromSamsung(): Boolean {
+        val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.RELATIVE_PATH,       // API 29+
+            MediaStore.Images.Media.BUCKET_DISPLAY_NAME, // legacy
+            MediaStore.Images.Media.MIME_TYPE,
+            MediaStore.Images.Media.OWNER_PACKAGE_NAME   // API 29+
+        )
+        val thresholdSec = (cameraLaunchAt / 1000L) - 5  // 5초 여유
+        val selection = buildString {
+            append("${MediaStore.Images.Media.DATE_ADDED} >= ?")
+            append(" AND ${MediaStore.Images.Media.MIME_TYPE} LIKE 'image/%'")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                append(" AND ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?")
+                append(" AND (${MediaStore.Images.Media.OWNER_PACKAGE_NAME} IS NULL")
+                append(" OR ${MediaStore.Images.Media.OWNER_PACKAGE_NAME} = ?)")
+            } else {
+                append(" AND ${MediaStore.Images.Media.BUCKET_DISPLAY_NAME} = ?")
+            }
+        }
+        val args = mutableListOf(thresholdSec.toString())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            args += "%DCIM/Camera%"
+            args += "com.sec.android.app.camera"
+        } else {
+            args += "Camera"
+        }
+
+        return try {
+            contentResolver.query(
+                uri, projection, selection, args.toTypedArray(),
+                "${MediaStore.Images.Media.DATE_ADDED} DESC"
+            )?.use { c -> c.moveToFirst() } ?: false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    /** 전면 복귀 시도 (성공/실패 불문하고 예외 없이 시도) */
+    private fun bringTaskToFront() {
+        try {
+            val am = getSystemService(ActivityManager::class.java)
+            am?.moveTaskToFront(taskId, 0)
+        } catch (_: Throwable) {}
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP   or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            startActivity(intent)
+        } catch (_: Throwable) {}
+    }
+
+    /** 2차: 헤드업 알림 → 탭 시 즉시 복귀 */
+    private fun showReturnHeadsUp() {
+        // 사용자 알림 차단 시 토스트
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            showToast("알림이 차단되어 자동 복귀 알림을 표시할 수 없습니다.", long = true)
+            return
+        }
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        else PendingIntent.FLAG_UPDATE_CURRENT
+
+        val pi = TaskStackBuilder.create(this)
+            .addNextIntentWithParentStack(Intent(this, MainActivity::class.java))
+            .getPendingIntent(RETURN_NOTI_ID, flags)
+
+        val noti = NotificationCompat.Builder(this, RETURN_CH_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("촬영 완료")
+            .setContentText("탭 하면 HkRuler로 돌아갑니다")
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)    // ✅ 사운드/진동(Heads-up 가중치)
+            .setContentIntent(pi)
+            .setFullScreenIntent(pi, false)                 // 화면 꺼져있을 때 즉시 보이도록 힌트
+            .build()
+
+        NotificationManagerCompat.from(this).notify(RETURN_NOTI_ID, noti)
     }
 
 
@@ -421,4 +654,27 @@ class MainActivity : AppCompatActivity() {
     private fun showToast(msg: String, long: Boolean = false) {
         Toast.makeText(this, msg, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
     }
+
+
+
+    override fun onStop() {
+        super.onStop()
+        // 백그라운드 전환 중 불필요한 관찰 방지(원하면 유지 가능)
+        // unregisterMediaObserver()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterMediaObserver()
+        stopFileObserver()
+    }
+    override fun onResume() {
+        super.onResume()
+        isInForeground = true
+    }
+    override fun onPause() {
+        super.onPause()
+        isInForeground = false
+    }
+
 }
