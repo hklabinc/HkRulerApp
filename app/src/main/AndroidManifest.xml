@@ -1,24 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- ✅ Android 11+ 패키지 가시성: 전체 카메라 UI와 삼성 카메라 패키지 조회 허용 -->
+    <!-- ✅ 패키지 가시성: 삼성 카메라/전체 카메라 UI 조회 -->
     <queries>
         <package android:name="com.sec.android.app.camera"/>
         <intent>
             <action android:name="android.media.action.STILL_IMAGE_CAMERA"/>
         </intent>
     </queries>
-    
-    <uses-permission android:name="android.permission.CAMERA"/>
-    <uses-feature android:name="android.hardware.camera.any" />
-    <!-- Android 13+ 갤러리 저장 시 권장 -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <!-- Android 9 이하 저장 -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
+    <!-- 권한 -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera.any"/>
+    <!-- FGS 권한(타입) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- 알림(Heads‑up) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- MediaStore 이미지 읽기 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- Android 10~12 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Android 9 이하 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
 
     <application
         android:name=".HkRulerApplication"
@@ -38,14 +42,15 @@
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
 
-        <!-- (옵션) FileProvider: 시스템 카메라에 직접 파일 경로 전달이 필요할 때 사용 -->
+        <!-- FileProvider (시스템 카메라 EXTRA_OUTPUT 용) -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -55,6 +60,25 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"/>
         </provider>
+
+        <!-- ✅ Foreground Service: 촬영 감지/복귀 -->
+        <service
+            android:name=".AutoReturnService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- ✅ 접근성 서비스: HOME→앱 복귀(프로 모드 유지) -->
+        <service
+            android:name=".access.AutoReturnAccessService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_return_accessibility_config"/>
+        </service>
 
     </application>
 </manifest>

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">HkRuler</string>
+    <string name="auto_return_accessibility_desc">Auto return to HkRuler</string>
 </resources>
