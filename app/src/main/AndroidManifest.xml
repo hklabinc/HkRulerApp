@@ -64,13 +64,13 @@
 
         <!-- ✅ Foreground Service: 촬영 감지/복귀 -->
         <service
-            android:name=".AutoReturnService"
+            android:name=".autoreturn.ReturnWatcherService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
         <!-- ✅ 접근성 서비스: HOME→앱 복귀(프로 모드 유지) -->
         <service
-            android:name=".access.AutoReturnAccessService"
+            android:name=".autoreturn.ReturnAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="false">
             <intent-filter>

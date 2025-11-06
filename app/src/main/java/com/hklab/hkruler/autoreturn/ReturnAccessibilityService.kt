@@ -1,5 +1,5 @@
 // com/hklab/hkruler/access/AutoReturnAccessService.kt
-package com.hklab.hkruler.access
+package com.hklab.hkruler.autoreturn
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
@@ -9,12 +9,12 @@ import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 
-class AutoReturnAccessService : AccessibilityService() {
+class ReturnAccessibilityService : AccessibilityService() {
 
     companion object {
-        @Volatile private var sInstance: AutoReturnAccessService? = null
+        @Volatile private var sInstance: ReturnAccessibilityService? = null
 
-        fun instance(): AutoReturnAccessService? = sInstance
+        fun instance(): ReturnAccessibilityService? = sInstance
 
         fun isEnabled(context: Context): Boolean {
             val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager

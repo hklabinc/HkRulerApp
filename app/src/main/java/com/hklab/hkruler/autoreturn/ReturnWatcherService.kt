@@ -1,23 +1,31 @@
-// AutoReturnService.kt
-package com.hklab.hkruler
+package com.hklab.hkruler.autoreturn
 
-import android.app.*
+import android.app.ActivityManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.database.ContentObserver
 import android.net.Uri
-import android.os.*
-import android.provider.MediaStore
-import android.os.FileObserver
+import android.os.Build
 import android.os.Environment
+import android.os.FileObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
-import android.content.pm.ServiceInfo
+import com.hklab.hkruler.MainActivity
+import com.hklab.hkruler.R
 import java.io.File
 import java.util.Locale
-import com.hklab.hkruler.access.AutoReturnAccessService
 
-class AutoReturnService : Service() {
+class ReturnWatcherService : Service() {
 
     companion object {
         const val CH_ID = "return_watcher"
@@ -42,7 +50,11 @@ class AutoReturnService : Service() {
                 NotificationChannel(CH_ID, "Return watcher", NotificationManager.IMPORTANCE_LOW)
             )
             nm?.createNotificationChannel(
-                NotificationChannel(FS_CH_ID, "Return (full-screen)", NotificationManager.IMPORTANCE_HIGH)
+                NotificationChannel(
+                    FS_CH_ID,
+                    "Return (full-screen)",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
             )
         }
         val noti = NotificationCompat.Builder(this, CH_ID)
@@ -162,8 +174,8 @@ class AutoReturnService : Service() {
         fileObserver = null
 
         // 접근성 ON → HOME 후 우리 앱 실행(프로 모드 보존)
-        if (AutoReturnAccessService.isEnabled(this)) {
-            AutoReturnAccessService.instance()?.returnToHkRuler()
+        if (ReturnAccessibilityService.isEnabled(this)) {
+            ReturnAccessibilityService.instance()?.returnToHkRuler()
             // 보강: 짧은 재시도 + 종료
             scheduleBringToFront()
             main.postDelayed({ cleanupAndStop() }, 1300L)
@@ -190,7 +202,8 @@ class AutoReturnService : Service() {
         } catch (_: Throwable) {}
         try {
             val intent = Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -207,7 +220,8 @@ class AutoReturnService : Service() {
         val pi = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP)

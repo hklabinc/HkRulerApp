@@ -24,20 +24,19 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.media.MediaScannerConnection
 import android.net.Uri
 import androidx.core.content.FileProvider
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import com.hklab.hkruler.access.AutoReturnAccessService
+import com.hklab.hkruler.autoreturn.ReturnAccessibilityService
 
 import android.app.ActivityOptions
-import android.hardware.display.DisplayManager
 import android.view.Display
 import android.app.UiModeManager
 import android.content.res.Configuration
+import com.hklab.hkruler.autoreturn.ReturnWatcherService
 
 
 class MainActivity : AppCompatActivity() {
@@ -321,14 +320,14 @@ class MainActivity : AppCompatActivity() {
     // ---- 삼성 카메라(전체 UI, 프로 모드 유지)
     private fun openSamsungCameraFullUi() {
         // (선택) 접근성 ON 유도: 항상 자동 복귀를 원한다면 켜두는 것을 권장
-        if (!AutoReturnAccessService.isEnabled(this)) {
+        if (!ReturnAccessibilityService.isEnabled(this)) {
             showToast("항상 자동 복귀를 원하면 '설정 > 접근성 > HkRuler'를 켜주세요.", long = true)
         }
 
         // 1) Foreground Service 시작(감지/복귀 전담)
         val launchAt = System.currentTimeMillis()
-        val svc = Intent(this, AutoReturnService::class.java)
-            .putExtra(AutoReturnService.EXTRA_LAUNCH_AT, launchAt)
+        val svc = Intent(this, ReturnWatcherService::class.java)
+            .putExtra(ReturnWatcherService.EXTRA_LAUNCH_AT, launchAt)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
 
         // 2) 삼성 카메라를 ‘항상 폰 화면’에서 실행: 프록시로 위임
