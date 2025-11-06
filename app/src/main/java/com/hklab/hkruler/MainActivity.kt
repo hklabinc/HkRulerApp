@@ -336,7 +336,7 @@ class MainActivity : AppCompatActivity() {
     private fun openSamsungCameraFullUi() {
         // (선택) 접근성 ON 유도: 항상 자동 복귀를 원한다면 켜두는 것을 권장
         if (!ReturnAccessibilityService.isEnabled(this)) {
-            showToast("항상 자동 복귀를 원하면 '설정 > 접근성 > HkRuler'를 켜주세요.", long = true)
+            showToast("항상 자동 복귀를 원하면 '설정 > 접근성 > HkRuler'를 켜주세요.")
         }
 
         // 1) Foreground Service 시작(감지/복귀 전담)
