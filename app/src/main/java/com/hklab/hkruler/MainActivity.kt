@@ -42,6 +42,15 @@ import android.view.Display
 import android.app.UiModeManager
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
+// import 추가
+import com.hklab.hkruler.processing.FilmEdgeProcessor
+import com.hklab.hkruler.processing.FilmEdgeParams
+import com.hklab.hkruler.processing.PreviewKind
+import java.util.concurrent.Executors
+import android.os.Looper
+import android.os.Handler
+
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -59,6 +68,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var camera: CameraController
     private var settings = AppSettings(aspect = Aspect.R16_9)
+
+    // ✅ 결과 표시 모드(기본=Overlay). 상위 파라미터로 제어하고 싶으면 이 값을 바꿔주면 됩니다.
+    private var resultView: PreviewKind = PreviewKind.OVERLAY
+
+    // ✅ 현재 미리보기의 분석 결과 파일(캐시)
+    private var pendingOverlayFile: File? = null
+    private var pendingEdgeFile: File? = null
+
+    // ✅ 분석 스레드
+    private val worker = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // 시스템 카메라용 보류 URI/파일
     private var pendingSystemPhotoUri: Uri? = null
@@ -212,6 +232,17 @@ class MainActivity : AppCompatActivity() {
         // ✅ 미리보기 저장/취소
         btnPreviewSave.setOnClickListener { onClickSavePreview() }
         btnPreviewCancel.setOnClickListener { onClickCancelPreview() }
+
+        // ✅ Edge/Overlay 전환
+        chkEdgeView.setOnCheckedChangeListener { _, isChecked ->
+            resultView = if (isChecked) PreviewKind.EDGE else PreviewKind.OVERLAY
+            updatePreviewImageByMode()
+        }
+
+        // (선택) 이미지 탭으로도 토글 하고 싶으면:
+        imagePreview.setOnClickListener {
+            chkEdgeView.isChecked = !chkEdgeView.isChecked
+        }
     }
 
     private fun createReturnChannel() {
@@ -261,33 +292,85 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 미리보기 오버레이 표시 + 정보 갱신 */
+    /** 미리보기 오버레이 표시 + 정보 갱신 */
     private fun showPreviewOverlay(file: File, displayName: String) {
-        // 이미지 표시
+        // (기존) 정보 표시
         binding.imagePreview.setImageURI(Uri.fromFile(file))
-
-        // 해상도/크기 읽기
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opts)
         val w = opts.outWidth
         val h = opts.outHeight
         val size = file.length()
-
         binding.txtShotInfo.text = buildString {
             append(displayName)
             if (w > 0 && h > 0) append(" ${w}×${h}")
             append(" (${readableBytes(size)})")
         }
-
         binding.previewOverlay.visibility = View.VISIBLE
+
+        // ✅ Edge/Overlay 초기 모드
+        binding.chkEdgeView.isChecked = (resultView == PreviewKind.EDGE)
+
+        // ✅ 이전 결과 파일 정리
+        pendingOverlayFile?.let { runCatching { it.delete() } }
+        pendingEdgeFile?.let { runCatching { it.delete() } }
+        pendingOverlayFile = null
+        pendingEdgeFile = null
+
+        // ✅ 파이프라인 실행(백그라운드)
+        worker.execute {
+            try {
+                // 기존
+                // val res = FilmEdgeProcessor.processFromFile(this, file, cacheDir, FilmEdgeParams())
+
+                // 디버깅 ON
+                val res = FilmEdgeProcessor.processFromFile(
+                    this, file, cacheDir, FilmEdgeParams()
+                ) { msg ->
+                    // 메인스레드 토스트
+                    runOnUiThread { showToast("[DBG] $msg") }
+                }
+                // 성공 시 UI 업데이트
+                mainHandler.post {
+                    // 최신 프리뷰인지 확인(변경/취소 대비)
+                    if (binding.previewOverlay.visibility != View.VISIBLE) return@post
+                    pendingOverlayFile = res.overlayFile
+                    pendingEdgeFile = res.edgeFile
+                    // 기본은 항상 Overlay로 시작
+                    resultView = PreviewKind.OVERLAY
+                    binding.chkEdgeView.isChecked = false
+                    updatePreviewImageByMode() // 현재 모드(Overlay/Edge)에 맞춰 표시
+                }
+            } catch (e: Throwable) {
+                mainHandler.post { showToast("분석 실패: ${e.message}", long = true) }
+            }
+        }
     }
+
+    // ✅ 보기 모드에 따라 ImageView 갱신
+    private fun updatePreviewImageByMode() {
+        val f = when (resultView) {
+            PreviewKind.OVERLAY -> pendingOverlayFile ?: pendingPreviewFile
+            PreviewKind.EDGE    -> pendingEdgeFile    ?: pendingOverlayFile ?: pendingPreviewFile
+        }
+        if (f != null) binding.imagePreview.setImageURI(Uri.fromFile(f))
+    }
+
+    // ✅ 저장 시 실제로 복사할 소스 파일(현재 화면에 보이는 결과)
+    private fun currentResultFileForSave(): File? {
+        return when (resultView) {
+            PreviewKind.OVERLAY -> pendingOverlayFile ?: pendingPreviewFile
+            PreviewKind.EDGE    -> pendingEdgeFile    ?: pendingOverlayFile ?: pendingPreviewFile
+        }
+    }
+
 
     /** 미리보기 → 저장 버튼 */
     private fun onClickSavePreview() {
-        if (pendingPreviewFile == null || pendingDisplayName == null) {
+        if (pendingDisplayName == null) {
             hidePreviewOverlay()
             return
         }
-        // API 28 이하: 퍼블릭 폴더에 쓰기 권한 필요
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
             legacyWritePermissionForPreviewSaveLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -296,27 +379,42 @@ class MainActivity : AppCompatActivity() {
         reallySavePendingPreviewToGallery()
     }
 
+
     /** 미리보기 → 취소 버튼 */
     private fun onClickCancelPreview() {
-        pendingPreviewFile?.let { runCatching { it.delete() } }
+        // 결과 캐시 파일 정리
+        pendingOverlayFile?.let { runCatching { it.delete() } }
+        pendingEdgeFile?.let { runCatching { it.delete() } }
+        pendingOverlayFile = null; pendingEdgeFile = null
+
+        // 원본 임시 파일(인앱 캡처)은 삭제 / 삼성카메라 퍼블릭 파일은 보통 삭제 권한 없음
+        pendingPreviewFile?.let { runCatching { if (it.parentFile == cacheDir) it.delete() } }
         pendingPreviewFile = null
         pendingDisplayName = null
         binding.txtShotInfo.text = ""
         hidePreviewOverlay()
     }
 
-    /** 실제 저장 수행(권한 보장 하에 호출) */
+
+    /** 실제 저장 수행(권한 보장 하에 호출) — ✅ 결과 파일 저장으로 변경 */
     private fun reallySavePendingPreviewToGallery() {
-        val src = pendingPreviewFile ?: return
-        val displayName = pendingDisplayName ?: "IMG_${filenameFormat.format(Date())}.jpg"
+        val src = currentResultFileForSave() ?: run {
+            showToast("저장할 결과가 없습니다", long = true)
+            return
+        }
+        // 확장자/타입
+        val isPng = src.extension.equals("png", ignoreCase = true)
+        val mime = if (isPng) "image/png" else "image/jpeg"
+        val displayName = pendingDisplayName?.let { base ->
+            val bn = base.substringBeforeLast('.')
+            if (resultView == PreviewKind.EDGE) "${bn}_edge.png" else "${bn}_overlay.png"
+        } ?: if (resultView == PreviewKind.EDGE) "result_edge.png" else "result_overlay.png"
 
         val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // 스코프 저장소 → Pictures/HkRuler
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                put(MediaStore.MediaColumns.RELATIVE_PATH,
-                    Environment.DIRECTORY_PICTURES + "/$STORAGE_FOLDER")
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/HkRuler")
             }
             val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             if (uri != null) {
@@ -327,31 +425,28 @@ class MainActivity : AppCompatActivity() {
                 }.isSuccess
             } else false
         } else {
-            // API 28 이하 → 퍼블릭 Pictures/HkRuler로 복사
             val dir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                STORAGE_FOLDER
+                "HkRuler"
             ).apply { if (!exists()) mkdirs() }
             val dst = File(dir, displayName)
             runCatching {
                 FileInputStream(src).use { input ->
                     FileOutputStream(dst).use { output -> input.copyTo(output) }
                 }
-                // 갤러리 스캔
-                MediaScannerConnection.scanFile(
-                    this, arrayOf(dst.absolutePath), arrayOf("image/jpeg"), null
-                )
+                MediaScannerConnection.scanFile(this, arrayOf(dst.absolutePath), arrayOf(mime), null)
             }.isSuccess
         }
 
-        if (ok) {
-            showToast("사진이 저장되었습니다: Pictures/$STORAGE_FOLDER/$displayName")
-            runCatching { src.delete() }
-        } else {
-            showToast("저장 실패(파일 복사 중 오류)", long = true)
-        }
+        if (ok) showToast("저장 완료: Pictures/HkRuler/$displayName") else showToast("저장 실패", long = true)
 
-        // 상태/오버레이 정리
+        // 상태/오버레이 정리(원본 임시 파일은 캡처의 경우만 캐시임)
+        pendingOverlayFile = null
+        pendingEdgeFile = null
+        pendingPreviewFile?.let { srcFile ->
+            // 인앱 촬영 임시 파일은 삭제(삼성 카메라 사진은 퍼블릭 영역이므로 삭제 불가/무시)
+            runCatching { if (srcFile.parentFile == cacheDir) srcFile.delete() }
+        }
         pendingPreviewFile = null
         pendingDisplayName = null
         binding.previewOverlay.visibility = View.GONE

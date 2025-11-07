@@ -58,6 +58,15 @@
             android:scaleType="fitCenter"
             tools:src="@android:drawable/ic_menu_gallery" />
 
+        <CheckBox
+            android:id="@+id/chkEdgeView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Edge View"
+            android:layout_gravity="top|end"
+            android:layout_margin="8dp"
+            android:checked="false"/>
+
         <!-- 하단 버튼 바: 취소 / 저장 -->
         <LinearLayout
             android:layout_width="match_parent"
