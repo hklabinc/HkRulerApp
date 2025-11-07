@@ -560,4 +560,53 @@ class MainActivity : AppCompatActivity() {
         }
         startActivity(intent)
     }
+
+
+    override fun onResume() {
+        super.onResume()
+
+        // 이미 미리보기 중이면 무시
+        if (binding.previewOverlay.visibility == View.VISIBLE) return
+
+        // 삼성카메라에서 복귀했는지 감지
+        val recent = getLatestPhotoFromSamsungCamera()
+        recent?.let { file ->
+            pendingPreviewFile = file
+            pendingDisplayName = file.name
+            showPreviewOverlay(file, file.name)
+        }
+    }
+
+    private fun getLatestPhotoFromSamsungCamera(): File? {
+        return try {
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_ADDED,
+                MediaStore.Images.Media.DATA
+            )
+            val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+            val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+            contentResolver.query(uri, projection, null, null, sortOrder)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+                    val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                    val path = cursor.getString(pathCol)
+                    val name = cursor.getString(nameCol)
+                    val file = File(path)
+                    // 최근 10초 내에 찍은 파일만 인정 (앱 복귀 시점 기준)
+                    val diff = (System.currentTimeMillis() - file.lastModified())
+                    if (file.exists() && diff < 10_000) { // 10초 이내
+                        return file
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+
 }
