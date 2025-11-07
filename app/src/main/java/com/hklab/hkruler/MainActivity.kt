@@ -71,6 +71,28 @@ class MainActivity : AppCompatActivity() {
     // 파일명 포맷터
     private val filenameFormat by lazy { SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US) }
 
+    private val REQUIRED_PERMISSIONS = buildList {
+        add(Manifest.permission.CAMERA)
+        if (Build.VERSION.SDK_INT >= 33) {
+            add(Manifest.permission.READ_MEDIA_IMAGES)
+            add(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+
+    private val allPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            val denied = results.filterValues { !it }.keys
+            if (denied.isEmpty()) {
+                startCamera()
+            } else {
+                showToast("필수 권한이 거부되었습니다: ${denied.joinToString()}", long = true)
+                finish()
+            }
+        }
+
     // 권한 요청 런처들
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -149,21 +171,18 @@ class MainActivity : AppCompatActivity() {
         initCameraController()
         initUi()
         createReturnChannel()
-        checkAndStartCamera()
 
-        // 알림 권한(안드13+)
-        if (Build.VERSION.SDK_INT >= 33 && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTI)
+        // 한 번에 권한 확인 및 요청
+        if (!hasAllPermissions()) {
+            allPermissionLauncher.launch(REQUIRED_PERMISSIONS.toTypedArray())
+        } else {
+            startCamera()
         }
-        // 이미지 읽기 권한 (MediaStore 접근용)
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (!hasPermission(Manifest.permission.READ_MEDIA_IMAGES)) {
-                requestPermissions(arrayOf(Manifest.permission.READ_MEDIA_IMAGES), REQ_READ_IMAGES)
-            }
-        } else if (Build.VERSION.SDK_INT >= 29) {
-            if (!hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-                requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_READ_EXT)
-            }
+    }
+
+    private fun hasAllPermissions(): Boolean {
+        return REQUIRED_PERMISSIONS.all { perm ->
+            ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -205,14 +224,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- Camera start
-    private fun checkAndStartCamera() {
-        if (hasPermission(Manifest.permission.CAMERA)) {
-            startCamera()
-        } else {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-    }
-
     private fun startCamera() {
         camera.bind(this, settings)
         updateOverlayVisibility()
