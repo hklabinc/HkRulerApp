@@ -1,4 +1,3 @@
-// com/hklab/hkruler/access/AutoReturnAccessService.kt
 package com.hklab.hkruler.autoreturn
 
 import android.accessibilityservice.AccessibilityService
@@ -24,7 +23,7 @@ class ReturnAccessibilityService : AccessibilityService() {
             return list.any {
                 val si = it.resolveInfo?.serviceInfo
                 si?.packageName == context.packageName &&
-                        si.name?.endsWith("AutoReturnAccessService") == true
+                        si.name?.endsWith("ReturnAccessibilityService") == true
             }
         }
     }
